@@ -163,12 +163,10 @@ def main_worker(gpu, args):
     
     # Data Loader
     train_loader = DataLoader(
-        dataset=train_dataset, batch_size=per_device_batch_size, num_workers=args.workers,
-        pin_memory=True, sampler=train_sampler
+        dataset=train_dataset, batch_size=per_device_batch_size, num_workers=args.workers, pin_memory=True, sampler=train_sampler
     )
     test_loader = DataLoader(
-        dataset=test_dataset, batch_size=per_device_batch_size, num_workers=args.workers,
-        pin_memory=True, sampler=test_sampler
+        dataset=test_dataset, batch_size=per_device_batch_size, num_workers=args.workers, pin_memory=True, sampler=test_sampler
     )
     
     # Loss Function
@@ -217,6 +215,8 @@ def main_worker(gpu, args):
     if args.rank == 0:
         log_df = pd.DataFrame(log)
         log_df.to_parquet(log_path)
+    
+    dist.destroy_process_group()
 
 
 if __name__ == "__main__":
