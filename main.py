@@ -171,8 +171,8 @@ def main_worker(gpu, args):
     
     for epoch in range(args.epochs):
         train_sampler.set_epoch(epoch)
-        correct = 0 
-        _loss = 0
+        _acc = []
+        _loss = []
         for step, (train_img, train_label) in tqdm(enumerate(train_loader, start=epoch * len(train_loader))):
             train_img = train_img.cuda(gpu, non_blocking=True)
             train_label = train_label.cuda(gpu, non_blocking=True)
@@ -184,17 +184,17 @@ def main_worker(gpu, args):
             optimizer.step()
             
             if args.rank == 0:
-                correct += (logits.argmax(1) == train_label).type(torch.float).sum().item()
-                _loss += loss.item()
+                _acc.append((logits.argmax(1) == train_label).type(torch.float).sum().item() / train_label.size(0))
+                _loss.append(loss.item())
         
         if args.rank == 0:
-            log["train_loss"].append(_loss/len(train_loader))
-            log["train_acc"].append(correct/len(train_loader.dataset))
+            log["train_loss"].append(sum(_loss) / len(_loss))
+            log["train_acc"].append(sum(_acc) / len(_acc))
         
         test_sampler.set_epoch(epoch)
         with torch.no_grad():
-            correct = 0 
-            _loss = 0
+            _acc = []
+            _loss = []
             for _, (val_img, val_label) in tqdm(enumerate(test_loader)):
                 val_img = val_img.cuda(gpu, non_blocking=True)
                 val_label = val_label.cuda(gpu, non_blocking=True)
@@ -202,12 +202,12 @@ def main_worker(gpu, args):
                 loss = criterion(logits, val_label)
             
                 if args.rank == 0:
-                    correct += (logits.argmax(1) == val_label).type(torch.float).sum().item()
-                    _loss += loss.item()
+                    _acc.append((logits.argmax(1) == val_label).type(torch.float).sum().item() / val_label.size(0))
+                    _loss.append(loss.item())
             
             if args.rank == 0:
                 log["test_loss"].append(_loss/len(test_loader))
-                log["test_acc"].append(correct/len(test_loader.dataset))
+                log["test_acc"].append(sum(_acc) / len(_acc))
         
         if args.rank == 0:
             print(f"Epoch: {epoch} - " + " - ".join([f"{key}: {log[key][epoch]}" for key in log]))
