@@ -1,5 +1,6 @@
-import os, sys
-from glob import glob
+import os
+import warnings
+warnings.filterwarnings('ignore')
 import torch
 from torch import nn
 from torch import optim
@@ -16,8 +17,6 @@ import albumentations as A
 from tqdm import tqdm
 import argparse
 import pandas as pd
-import matplotlib.pyplot as plt
-import seaborn as sns
 import numpy as np
 import random
 
@@ -28,8 +27,7 @@ os.environ["DEEPLAKE_DOWNLOAD_PATH"] = "~/data/"
 data_cls_map = {
     "cifar10" : 10,
     "cifar100" : 100,
-    "imagenet" : 1000,
-    "caltech101" : 101
+    "imagenet" : 1000
 }
 
 # Data Augmentation Callable Function
@@ -57,7 +55,6 @@ class CLFDataset(Dataset):
     def __getitem__(self, index):        
         img = self.ds[index]["images"].data()["value"]
         label = self.ds[index]["labels"].data()["value"].tolist()[0]
-        
         processed_imgs = torch.from_numpy(transform(image = img)["image"]).permute(-1,0,1)   
          
         return (processed_imgs, label)
@@ -211,6 +208,9 @@ def main_worker(gpu, args):
             if args.rank == 0:
                 log["test_loss"].append(_loss/len(test_loader))
                 log["test_acc"].append(correct/len(test_loader.dataset))
+        
+        if args.rank == 0:
+            print(f"Epoch: {epoch} - " + " - ".join([f"{key}: {log[key][epoch]}" for key in log]))
     
     if args.rank == 0:
         log_df = pd.DataFrame(log)
@@ -226,7 +226,7 @@ if __name__ == "__main__":
                     epilog='ENJOY!!!')
     
     parser.add_argument('--dataset', type = str, default='cifar100',
-                    help='dataset name', choices=['cifar10', 'cifar100', 'imagenet', 'caltech101'])
+                    help='dataset name', choices=['cifar10', 'cifar100', 'imagenet'])
     parser.add_argument('--bs', type = int, default=32,
                     help='batch size')
     parser.add_argument('--workers', type = int, default=4,
