@@ -1,6 +1,7 @@
 import os
+os.environ["PYTHONWARNINGS"] = "ignore"
 import warnings
-warnings.filterwarnings('ignore')
+warnings.filterwarnings('ignore', category = UserWarning)
 import torch
 from torch import nn
 from torch import optim
@@ -206,7 +207,7 @@ def main_worker(gpu, args):
                     _loss.append(loss.item())
             
             if args.rank == 0:
-                log["test_loss"].append(_loss/len(test_loader))
+                log["test_loss"].append(sum(_loss) / len(_loss))
                 log["test_acc"].append(sum(_acc) / len(_acc))
         
         if args.rank == 0:
