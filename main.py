@@ -167,28 +167,27 @@ def main_worker(gpu, args):
             log["train_loss"].append(train_loss/(batch_count+1))
             log["train_acc"].append(100.*correct/total)
         
-        test_sampler.set_epoch(epoch)
-        with torch.no_grad():
-            test_loss = 0
-            correct = 0
-            total = 0
-            batch_count = 0
-            for step, (val_img, val_label) in tqdm(enumerate(test_loader)):
-                batch_count = step
-                val_img = val_img.cuda(gpu, non_blocking=True)
-                val_label = val_label.cuda(gpu, non_blocking=True)
-                logits = model(val_img)
-                loss = criterion(logits, val_label)
-            
-                if args.rank == 0:
+        if args.rank == 0:
+            test_sampler.set_epoch(epoch)
+            with torch.no_grad():
+                test_loss = 0
+                correct = 0
+                total = 0
+                batch_count = 0
+                for step, (val_img, val_label) in tqdm(enumerate(test_loader)):
+                    batch_count = step
+                    val_img = val_img.cuda(gpu, non_blocking=True)
+                    val_label = val_label.cuda(gpu, non_blocking=True)
+                    logits = model(val_img)
+                    loss = criterion(logits, val_label)
+                
                     test_loss += loss.item()
                     _, predicted = logits.max(1)
                     total += val_label.size(0)
                     correct += predicted.eq(val_label).sum().item()
-            
-            if args.rank == 0:
-                log["test_loss"].append(test_loss/(batch_count+1))
-                log["test_acc"].append(100.*correct/total)   
+                
+                    log["test_loss"].append(test_loss/(batch_count+1))
+                    log["test_acc"].append(100.*correct/total)   
         
         if args.rank == 0:
             print(f"Epoch: {epoch} - " + " - ".join([f"{key}: {log[key][epoch]}" for key in log]))
