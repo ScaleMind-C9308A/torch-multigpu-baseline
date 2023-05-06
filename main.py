@@ -219,8 +219,9 @@ if __name__ == "__main__":
     
     args = parser.parse_args()
     
-    random.seed(args.seed)
-    np.random.seed(args.seed)
-    torch.manual_seed(args.seed)
+    if args.seed is not None:
+        random.seed(args.seed)
+        np.random.seed(args.seed)
+        torch.manual_seed(args.seed)
     
     main(args=args)
