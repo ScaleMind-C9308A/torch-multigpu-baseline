@@ -6,6 +6,8 @@ import torch
 from torch import nn
 from torch import optim
 import torchvision.models as models
+from torchvision import datasets
+from torchvision import transforms
 from torch.utils.data import Dataset, DataLoader
 
 import torch.multiprocessing as mp
@@ -13,62 +15,15 @@ import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data.distributed import DistributedSampler
 
-import deeplake
-import albumentations as A
 from tqdm import tqdm
 import argparse
 import pandas as pd
 import numpy as np
 import random
 
-# Data saving dir path
-os.environ["DEEPLAKE_DOWNLOAD_PATH"] = "~/data/"
-
-# Data2#class mapping
-data_cls_map = {
-    "cifar10" : 10,
-    "cifar100" : 100,
-    "imagenet" : 1000
-}
-
-# Data Augmentation Callable Function
-transform = A.Compose([
-    A.Normalize()
-])
-
-# Classification Data set from Deep Lake
-class CLFDataset(Dataset):
-    def __init__(self, args: argparse, subset = "train") -> None:
-        super().__init__()
-        
-        self.args = args
-        self.subset = subset
-        self.ds = deeplake.load(
-            path = f'hub://activeloop/{args.dataset}-{self.subset}',
-            access_method = 'local')
-
-    def __getitem__(self, index):        
-        img = self.ds[index]["images"].data()["value"]
-        label = self.ds[index]["labels"].data()["value"].tolist()[0]
-        processed_imgs = torch.from_numpy(transform(image = img)["image"]).permute(-1,0,1)   
-         
-        return (processed_imgs, label)
-    
-    def __len__(self):
-        return len(self.ds)
-
-
-# Key2Model mapping
-model_dict = {
-    "resnet18": models.resnet18,
-    "resnet34" : models.resnet34,
-    "resnet50": models.resnet50,
-    "effb0" : models.efficientnet_b0
-}
-
 # LARS Optimizer
 class LARS(optim.Optimizer):
-    def __init__(self, params, lr, weight_decay=0, momentum=0.9, eta=0.001,
+    def __init__(self, params, lr, weight_decay=5e-4, momentum=0.9, eta=0.001,
                  weight_decay_filter=False, lars_adaptation_filter=False):
         defaults = dict(lr=lr, weight_decay=weight_decay, momentum=momentum,
                         eta=eta, weight_decay_filter=weight_decay_filter,
@@ -130,24 +85,42 @@ def main_worker(gpu, args):
             "test_acc" : []
         }
         
-        log_path = os.getcwd() + f"/{args.dataset}-{args.model}-{args.bs}.parquet"
+        log_path = os.getcwd() + f"/{args.bs}.parquet"
     
     torch.cuda.set_device(gpu)
     torch.backends.cudnn.benchmark = True
     
     # Model
-    model = model_dict[args.model](num_classes = data_cls_map[args.dataset]).cuda(gpu)
+    model = models.resnet18(num_classes = 10).cuda(gpu)
     model = DDP(model, device_ids=[gpu])
     
     # Optimizer
     optimizer = LARS(
-        model.parameters(), lr=args.lr, weight_decay=0, 
-        weight_decay_filter=True, lars_adaptation_filter=True
+        model.parameters(), lr=args.lr, weight_decay_filter=True, lars_adaptation_filter=True
     )
     
     # Dataset
-    train_dataset = CLFDataset(args=args, subset='train')
-    test_dataset = CLFDataset(args=args, subset='test')
+    train_dataset = datasets.CIFAR10(
+        root="~/data/",
+        train=True,
+        transform=transforms.Compose([
+            transforms.RandomCrop(32, padding=4),
+            transforms.RandomHorizontalFlip(),
+            transforms.RandomRotation(15),
+            transforms.ToTensor(),
+            transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
+        ]),
+        download=True
+    )
+    test_dataset = datasets.CIFAR10(
+        root="~/data/",
+        train=False,
+        transform=transforms.Compose([
+            transforms.ToTensor(),
+            transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
+        ]),
+        download=True
+    )
     assert args.bs % args.world_size == 0
     train_sampler = DistributedSampler(train_dataset)
     test_sampler = DistributedSampler(test_dataset)
@@ -166,9 +139,12 @@ def main_worker(gpu, args):
     
     for epoch in range(args.epochs):
         train_sampler.set_epoch(epoch)
-        _acc = []
-        _loss = []
+        train_loss = 0
+        correct = 0
+        total = 0
+        batch_count = 0
         for step, (train_img, train_label) in tqdm(enumerate(train_loader, start=epoch * len(train_loader))):
+            batch_count = step
             train_img = train_img.cuda(gpu, non_blocking=True)
             train_label = train_label.cuda(gpu, non_blocking=True)
             logits = model(train_img)
@@ -179,33 +155,42 @@ def main_worker(gpu, args):
             optimizer.step()
             
             if args.rank == 0:
-                _acc.append((logits.argmax(1) == train_label).type(torch.float).sum().item() / train_label.size(0))
-                _loss.append(loss.item())
+                train_loss += loss.item()
+                _, predicted = logits.max(1)
+                total += train_label.size(0)
+                correct += predicted.eq(train_label).sum().item()
         
         if args.rank == 0:
-            log["train_loss"].append(sum(_loss) / len(_loss))
-            log["train_acc"].append(sum(_acc) / len(_acc))
+            log["train_loss"].append(train_loss/(batch_count+1))
+            log["train_acc"].append(100.*correct/total)
         
         test_sampler.set_epoch(epoch)
         with torch.no_grad():
-            _acc = []
-            _loss = []
-            for _, (val_img, val_label) in tqdm(enumerate(test_loader)):
+            test_loss = 0
+            correct = 0
+            total = 0
+            batch_count = 0
+            for step, (val_img, val_label) in tqdm(enumerate(test_loader)):
+                batch_count = step
                 val_img = val_img.cuda(gpu, non_blocking=True)
                 val_label = val_label.cuda(gpu, non_blocking=True)
                 logits = model(val_img)
                 loss = criterion(logits, val_label)
             
                 if args.rank == 0:
-                    _acc.append((logits.argmax(1) == val_label).type(torch.float).sum().item() / val_label.size(0))
-                    _loss.append(loss.item())
+                    test_loss += loss.item()
+                    _, predicted = logits.max(1)
+                    total += val_label.size(0)
+                    correct += predicted.eq(val_label).sum().item()
             
             if args.rank == 0:
-                log["test_loss"].append(sum(_loss) / len(_loss))
-                log["test_acc"].append(sum(_acc) / len(_acc))
+                log["test_loss"].append(test_loss/(batch_count+1))
+                log["test_acc"].append(100.*correct/total)   
         
         if args.rank == 0:
             print(f"Epoch: {epoch} - " + " - ".join([f"{key}: {log[key][epoch]}" for key in log]))
+            
+        
     
     if args.rank == 0:
         log_df = pd.DataFrame(log)
@@ -220,19 +205,15 @@ if __name__ == "__main__":
                     description='This project conduct the benchmark of among batch sizes in multi-gpu',
                     epilog='ENJOY!!!')
     
-    parser.add_argument('--dataset', type = str, default='cifar100',
-                    help='dataset name', choices=['cifar10', 'cifar100', 'imagenet'])
     parser.add_argument('--bs', type = int, default=32,
                     help='batch size')
     parser.add_argument('--workers', type = int, default=4,
                     help='Number of processor used in data loader')
-    parser.add_argument('--model', type = str, default='effb0',
-                    help='model name', choices=['resnet18', 'resnet50', 'resnet34', 'effb0'])
     parser.add_argument('--epochs', type = int, default=1,
                     help='# Epochs used in training')
-    parser.add_argument('--lr', type=float, default=0.001, 
+    parser.add_argument('--lr', type=float, default=0.01, 
                     metavar='LR', help='initial learning rate', dest='lr')
-    parser.add_argument('--seed', default=777, type=int,
+    parser.add_argument('--seed', default=None, type=int,
                     help='seed for initializing training. ')
     parser.add_argument('--port', type=int, default=8080, help='Multi-GPU Training Port.')
     
