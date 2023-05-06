@@ -33,12 +33,6 @@ data_cls_map = {
 
 # Data Augmentation Callable Function
 transform = A.Compose([
-    A.RGBShift(),
-    A.RandomBrightnessContrast(),
-    A.GaussianBlur(),
-    A.HorizontalFlip(),
-    A.SafeRotate(),
-    A.ColorJitter(),
     A.Normalize()
 ])
 
