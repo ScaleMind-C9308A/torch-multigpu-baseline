@@ -99,6 +99,9 @@ def main_worker(gpu, args):
         model.parameters(), lr=args.lr, weight_decay_filter=True, lars_adaptation_filter=True
     )
     
+    # Scheduler
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epoch)
+    
     # Dataset
     train_dataset = datasets.CIFAR10(
         root="~/data/",
@@ -190,7 +193,7 @@ def main_worker(gpu, args):
         if args.rank == 0:
             print(f"Epoch: {epoch} - " + " - ".join([f"{key}: {log[key][epoch]}" for key in log]))
             
-        
+        scheduler.step()
     
     if args.rank == 0:
         log_df = pd.DataFrame(log)
