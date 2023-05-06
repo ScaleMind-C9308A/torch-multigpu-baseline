@@ -100,7 +100,7 @@ def main_worker(gpu, args):
     )
     
     # Scheduler
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epoch)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs)
     
     # Dataset
     train_dataset = datasets.CIFAR10(
