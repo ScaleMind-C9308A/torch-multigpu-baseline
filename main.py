@@ -20,6 +20,23 @@ import argparse
 import pandas as pd
 import numpy as np
 import random
+import math
+
+def adjust_learning_rate(args, optimizer, loader, step):
+    max_steps = args.epochs * len(loader)
+    warmup_steps = 10 * len(loader)
+    base_lr = args.bs / 256
+    if step < warmup_steps:
+        lr = base_lr * step / warmup_steps
+    else:
+        step -= warmup_steps
+        max_steps -= warmup_steps
+        q = 0.5 * (1 + math.cos(math.pi * step / max_steps))
+        end_lr = base_lr * 0.001
+        lr = base_lr * q + end_lr * (1 - q)
+    optimizer.param_groups[0]['lr'] = lr * args.learning_rate_weights
+    optimizer.param_groups[1]['lr'] = lr * args.learning_rate_biases
+
 
 # LARS Optimizer
 class LARS(optim.Optimizer):
@@ -85,22 +102,31 @@ def main_worker(gpu, args):
             "test_acc" : []
         }
         
-        log_path = os.getcwd() + f"/{args.bs}_{args.lr}.parquet"
+        log_path = os.getcwd() + f"/{args.bs}_{args.lr}_{args.warm}.parquet"
     
     torch.cuda.set_device(gpu)
     torch.backends.cudnn.benchmark = True
     
     # Model
     model = models.resnet18(num_classes = 10).cuda(gpu)
+    param_weights = []
+    param_biases = []
+    for param in model.parameters():
+        if param.ndim == 1:
+            param_biases.append(param)
+        else:
+            param_weights.append(param)
+    parameters = [{'params': param_weights}, {'params': param_biases}]
     model = DDP(model, device_ids=[gpu])
     
     # Optimizer
     optimizer = LARS(
-        model.parameters(), lr=args.lr, weight_decay_filter=True, lars_adaptation_filter=True
+        params=parameters, weight_decay=args.wd, lr=args.lr, weight_decay_filter=True, lars_adaptation_filter=True
     )
     
     # Scheduler
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs)
+    if not args.warm:
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs)
     
     # Dataset
     train_dataset = datasets.CIFAR10(
@@ -147,6 +173,10 @@ def main_worker(gpu, args):
         total = 0
         batch_count = 0
         for step, (train_img, train_label) in tqdm(enumerate(train_loader, start=epoch * len(train_loader))):
+            if args.warm:
+                adjust_learning_rate(args, optimizer, train_loader, step)
+            else:
+                scheduler.step()
             batch_count = step
             train_img = train_img.cuda(gpu, non_blocking=True)
             train_label = train_label.cuda(gpu, non_blocking=True)
@@ -190,8 +220,6 @@ def main_worker(gpu, args):
                 log["test_acc"].append(100.*correct/total)   
         
             print(f"Epoch: {epoch} - " + " - ".join([f"{key}: {log[key][epoch]}" for key in log]))
-            
-        scheduler.step()
     
     if args.rank == 0:
         log_df = pd.DataFrame(log)
@@ -217,6 +245,14 @@ if __name__ == "__main__":
     parser.add_argument('--seed', default=None, type=int,
                     help='seed for initializing training. ')
     parser.add_argument('--port', type=int, default=8080, help='Multi-GPU Training Port.')
+    parser.add_argument('--warm', action='store_true',
+                        help='Toggle to use warm up strategy')
+    parser.add_argument('--learning-rate-weights', default=0.2, type=float, metavar='LR',
+                    help='base learning rate for weights')
+    parser.add_argument('--learning-rate-biases', default=0.0048, type=float, metavar='LR',
+                    help='base learning rate for biases and batch norm parameters')
+    parser.add_argument('--wd', default=5e-4, type=float, metavar='W',
+                    help='weight decay')
     
     args = parser.parse_args()
     
