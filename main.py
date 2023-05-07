@@ -85,7 +85,7 @@ def main_worker(gpu, args):
             "test_acc" : []
         }
         
-        log_path = os.getcwd() + f"/{args.bs}.parquet"
+        log_path = os.getcwd() + f"/{args.bs}_{args.lr}.parquet"
     
     torch.cuda.set_device(gpu)
     torch.backends.cudnn.benchmark = True
@@ -186,10 +186,9 @@ def main_worker(gpu, args):
                     total += val_label.size(0)
                     correct += predicted.eq(val_label).sum().item()
                 
-                    log["test_loss"].append(test_loss/(batch_count+1))
-                    log["test_acc"].append(100.*correct/total)   
+                log["test_loss"].append(test_loss/(batch_count+1))
+                log["test_acc"].append(100.*correct/total)   
         
-        if args.rank == 0:
             print(f"Epoch: {epoch} - " + " - ".join([f"{key}: {log[key][epoch]}" for key in log]))
             
         scheduler.step()
