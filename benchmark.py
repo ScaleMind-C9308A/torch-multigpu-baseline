@@ -18,7 +18,7 @@ if __name__ == "__main__":
         bs, lr, warm = int(info_split[0]), float(info_split[1]), info_split[2]
         base_df = pd.read_parquet(par_file).iloc[:100, :]
         base_df["batch_size"] = [bs]*100
-        base_df["learning_rate"] = [lr]*100
+        base_df["learning_rate"] = [0.3]*100 if warm == "True" else [lr]*100
         base_df["warm_up"] = [warm]*100
         base_df["epoch"] = range(100)
         dfs.append(base_df)
