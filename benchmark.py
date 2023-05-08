@@ -13,7 +13,7 @@ if __name__ == "__main__":
     dfs = []
     
     for par_file in parquet_files:
-        ex_ref = par_file.split(".")[0]
+        ex_ref = par_file.split("/")[-1].split(".")[0]
         info_split = ex_ref.split("_")
         bs, lr, warm = int(info_split[0]), float(info_split[1]), info_split[2]
         base_df = pd.read_parquet(par_file).iloc[:100, :]
