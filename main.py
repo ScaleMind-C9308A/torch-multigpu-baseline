@@ -1,7 +1,4 @@
 import os
-os.environ["PYTHONWARNINGS"] = "ignore"
-import warnings
-warnings.filterwarnings('ignore', category = UserWarning)
 import torch
 from torch import nn
 from torch import optim
